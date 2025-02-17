@@ -1,0 +1,194 @@
+------------------------RF-----------------
+import numpy as np
+import matplotlib.pyplot as plt
+import rasterio
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, roc_auc_score, roc_curve
+from sklearn.ensemble import RandomForestRegressor  # Import RandomForestRegressor
+
+# Function to read GeoTIFF files
+def read_geotiff(file_path):
+    with rasterio.open(file_path) as src:
+        array = src.read(1)  
+    return array
+
+# Function to generate feature matrix from environmental factors
+def generate_feature_matrix(env_factors):
+    num_rows, num_cols = env_factors[0].shape
+    feature_matrix = np.zeros((num_rows * num_cols, len(env_factors)))
+    for i, factor in enumerate(env_factors):
+        feature_matrix[:, i] = factor.flatten()
+    return feature_matrix, num_rows, num_cols
+
+# Function to generate disease risk map using Random Forest
+def generate_disease_risk_map(env_factors, disease_map):
+    # Generate feature matrix from environmental factors
+    X, num_rows, num_cols = generate_feature_matrix(env_factors)
+    y = disease_map.flatten()
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
+    
+    # Initialize and train Random Forest model
+    model = RandomForestRegressor(n_estimators=100, max_depth=5, random_state=42)  # RandomForestRegressor instead of XGBoost
+    model.fit(X_train, y_train)
+    
+    # Predict disease risk for test data
+    y_pred_test = model.predict(X_test)
+    
+    # Calculate RMSE
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+    print("Root Mean Squared Error (RMSE) on Test Data:", rmse)
+    
+    # Calculate MAE
+    mae = mean_absolute_error(y_test, y_pred_test)
+    print("Mean Absolute Error (MAE) on Test Data:", mae)
+    
+    # Define threshold for classification using the 75th percentile
+    threshold = np.percentile(y, 75)
+    y_pred_binary = (y_pred_test > threshold).astype(int)
+    y_test_binary = (y_test > threshold).astype(int)
+    
+
+    # Predict disease risk for entire dataset
+    y_pred = model.predict(X_scaled)
+    y_pred_map = y_pred.reshape(num_rows, num_cols)
+    
+    return y_pred_map
+
+# Paths to GeoTIFF files
+env_factor1_file = r"C:...smi.tif"
+env_factor2_file = r"C:...lst.tif"
+env_factor3_file = r"C:...Savi.tif"
+disease_map_file = r"C:..ZCLmap.tif"
+
+# Read GeoTIFF files
+env_factor1 = read_geotiff(env_factor1_file)
+env_factor2 = read_geotiff(env_factor2_file)
+env_factor3 = read_geotiff(env_factor3_file)
+disease_map = read_geotiff(disease_map_file)
+
+# Fix specific values in the disease map if necessary
+disease_map[disease_map == 250] = 30
+
+# Generate disease risk map using Random Forest
+env_factors = [env_factor1, env_factor2, env_factor3]
+disease_risk_map_rf = generate_disease_risk_map(env_factors, disease_map)
+
+# Define custom colormap
+colors = ['white', 'lightyellow', 'lemonchiffon', 'lightgoldenrodyellow', 'khaki',
+          'gold', 'orange', 'darkorange', 'coral', 'orangered', 
+          'red', 'firebrick', 'darkred', 'maroon', 'brown', 'chocolate', 'Peru',
+          'sienna', 'saddlebrown', 'white']
+cmap = plt.cm.colors.ListedColormap(colors)
+
+# Plot the risk map
+plt.figure(figsize=(10, 4))
+plt.imshow(disease_risk_map_rf, cmap=cmap)
+plt.colorbar(label='ZCL Risk')
+plt.title('ZCL Risk Map (Random Forest)')
+plt.savefig('rf1.pdf', format='pdf', bbox_inches='tight')
+plt.show()
+
+
+#------------------GXBoost-----------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+import rasterio
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_error, accuracy_score, roc_auc_score, roc_curve
+import xgboost as xgb
+
+# Function to read GeoTIFF files
+def read_geotiff(file_path):
+    with rasterio.open(file_path) as src:
+        array = src.read(1)  
+    return array
+
+# Function to generate feature matrix from environmental factors
+def generate_feature_matrix(env_factors):
+    num_rows, num_cols = env_factors[0].shape
+    feature_matrix = np.zeros((num_rows * num_cols, len(env_factors)))
+    for i, factor in enumerate(env_factors):
+        feature_matrix[:, i] = factor.flatten()
+    return feature_matrix, num_rows, num_cols
+
+# Function to generate disease risk map using XGBoost
+def generate_disease_risk_map(env_factors, disease_map):
+    # Generate feature matrix from environmental factors
+    X, num_rows, num_cols = generate_feature_matrix(env_factors)
+    y = disease_map.flatten()
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    # Split data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.3, random_state=42)
+    
+    # Initialize and train XGBoost model
+    model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, learning_rate=0.1, max_depth=5)
+    model.fit(X_train, y_train)
+    
+    # Predict disease risk for test data
+    y_pred_test = model.predict(X_test)
+    
+    # Calculate RMSE
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred_test))
+    print("Root Mean Squared Error (RMSE) on Test Data:", rmse)
+    
+    # Calculate MAE
+    mae = mean_absolute_error(y_test, y_pred_test)
+    print("Mean Absolute Error (MAE) on Test Data:", mae)
+    
+    # Define threshold for classification using the 75th percentile
+    threshold = np.percentile(y, 75)
+    y_pred_binary = (y_pred_test > threshold).astype(int)
+    y_test_binary = (y_test > threshold).astype(int)
+   
+
+    # Predict disease risk for entire dataset
+    y_pred = model.predict(X_scaled)
+    y_pred_map = y_pred.reshape(num_rows, num_cols)
+    
+    return y_pred_map
+
+# Paths to GeoTIFF files
+env_factor1_file = r"C:...smi.tif"
+env_factor2_file = r"C:...lst.tif"
+env_factor3_file = r"C:...Savi.tif"
+disease_map_file = r"C:..ZCLmap.tif"
+
+# Read GeoTIFF files
+env_factor1 = read_geotiff(env_factor1_file)
+env_factor2 = read_geotiff(env_factor2_file)
+env_factor3 = read_geotiff(env_factor3_file)
+disease_map = read_geotiff(disease_map_file)
+
+# Fix specific values in the disease map if necessary
+disease_map[disease_map == 250] = 30
+
+# Generate disease risk map using XGBoost
+env_factors = [env_factor1, env_factor2, env_factor3]
+disease_risk_map_xgb = generate_disease_risk_map(env_factors, disease_map)
+
+# Define custom colormap
+colors = ['white', 'lightyellow', 'lemonchiffon', 'lightgoldenrodyellow', 'khaki',
+          'gold', 'orange', 'darkorange', 'coral', 'orangered', 
+          'red', 'firebrick', 'darkred', 'maroon', 'brown', 'chocolate', 'Peru',
+          'sienna', 'saddlebrown', 'white']
+cmap = plt.cm.colors.ListedColormap(colors)
+
+# Plot the risk map
+plt.figure(figsize=(10, 4))
+plt.imshow(disease_risk_map_xgb, cmap=cmap)
+plt.colorbar(label='ZCL Risk')
+plt.title('ZCL Risk Map (XGBoost)')
+plt.savefig('xgb1.pdf', format='pdf', bbox_inches='tight')
+plt.show()
