@@ -1,6 +1,7 @@
 Disease Risk Mapping Using Random Forest & XGBoost
 Status: Manuscript Under Peer Review (Submitted to Environmental Research Communications)
 Project Overview
+
 This repository implements an integrated AI-GIS-RS framework for the precise spatial risk prediction of Zoonotic Cutaneous Leishmaniasis (ZCL). The framework combines:
 •	Remote Sensing (RS): Extraction of environmental variables from satellite data
 •	Geographic Information Systems (GIS): Spatial data preparation and analysis
