@@ -1,0 +1,124 @@
+--------------------Uncertainty------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+import rasterio
+import copy
+from matplotlib.colors import LinearSegmentedColormap
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import GroupKFold
+from sklearn.metrics import mean_squared_error
+import xgboost as xgb
+
+# === Step 1: Read GeoTIFF ===
+def read_geotiff(file_path):
+    with rasterio.open(file_path) as src:
+        array = src.read(1).astype('float32')
+    return array
+
+# === Step 2: Prepare Feature Matrix ===
+def generate_feature_matrix(env_factors):
+    num_rows, num_cols = env_factors[0].shape
+    feature_matrix = np.zeros((num_rows * num_cols, len(env_factors)))
+    for i, factor in enumerate(env_factors):
+        feature_matrix[:, i] = factor.flatten()
+    return feature_matrix, num_rows, num_cols
+
+# === Helper: Create spatial blocks as groups ===
+def create_spatial_blocks(num_rows, num_cols, block_size):
+    block_ids = np.zeros((num_rows, num_cols), dtype=int)
+    block_id = 0
+    for r in range(0, num_rows, block_size):
+        for c in range(0, num_cols, block_size):
+            block_ids[r:r+block_size, c:c+block_size] = block_id
+            block_id += 1
+    return block_ids.flatten()
+
+# === Step 3: Cross-Validation + Uncertainty with GroupKFold ===
+def model_with_uncertainty(env_factors, disease_map, n_splits=5, block_size=20):
+    X, num_rows, num_cols = generate_feature_matrix(env_factors)
+    y = disease_map.flatten()
+
+    valid_mask = ~np.isnan(y) & np.all(~np.isnan(X), axis=1)
+    X_valid = X[valid_mask]
+    y_valid = y[valid_mask]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_valid)
+
+    # Create spatial groups for each pixel
+    groups_all = create_spatial_blocks(num_rows, num_cols, block_size)
+    groups = groups_all[valid_mask]
+
+    gkf = GroupKFold(n_splits=n_splits)
+    preds_matrix = np.full((n_splits, num_rows * num_cols), np.nan)
+
+    for fold_num, (train_idx, test_idx) in enumerate(gkf.split(X_scaled, y_valid, groups)):
+        model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100, learning_rate=0.1)
+        model.fit(X_scaled[train_idx], y_valid[train_idx])
+
+        # Prepare full matrix for prediction (including invalid pixels)
+        X_all_scaled = np.full((num_rows * num_cols, X_scaled.shape[1]), np.nan)
+        X_all_scaled[valid_mask] = X_scaled
+        fold_pred = model.predict(X_all_scaled)
+        preds_matrix[fold_num] = fold_pred
+
+        print(f"Fold {fold_num + 1}: Stored {np.count_nonzero(~np.isnan(fold_pred))} predictions")
+
+    mean_prediction = np.nanmean(preds_matrix, axis=0)
+    std_prediction = np.nanstd(preds_matrix, axis=0)
+
+    avg_std = np.nanmean(std_prediction)
+    print(f"Average Std Dev (Uncertainty) across all pixels: {avg_std:.4f}")
+
+    risk_map = mean_prediction.reshape(num_rows, num_cols)
+    uncertainty_map = std_prediction.reshape(num_rows, num_cols)
+
+    rmse = np.sqrt(mean_squared_error(y_valid, mean_prediction[valid_mask]))
+    print("RMSE (mean prediction):", round(rmse, 4))
+
+    return risk_map, uncertainty_map
+
+# === Step 4: File Paths ===
+env1 = read_geotiff
+env2 = read_geotiff
+env3 = read_geotiff
+disease_map = read_geotiff
+
+# Clean disease map (replace no-data with NaN)
+disease_map[disease_map == 250] = np.nan
+
+# === Step 5: Shape Alignment Check ===
+env_factors = [env1, env2, env3]
+assert all(f.shape == disease_map.shape for f in env_factors), "Mismatch in raster shapes!"
+
+# === Step 6: Modeling with spatial cross-validation ===
+risk_map, uncertainty_map = model_with_uncertainty(env_factors, disease_map, n_splits=5, block_size=20)
+
+# === Step 7: Save and Show Risk Map with Color Range ===
+masked_risk = np.ma.masked_invalid(risk_map)
+cmap_risk = copy.copy(plt.cm.YlOrRd)
+cmap_risk.set_bad(color='white')
+
+risk_vmin = np.nanpercentile(masked_risk, 1)
+risk_vmax = np.nanpercentile(masked_risk, 99)
+
+plt.figure(figsize=(10, 4), facecolor='white')
+im = plt.imshow(masked_risk, cmap=cmap_risk, vmin=risk_vmin, vmax=risk_vmax)
+plt.colorbar(im, label='Predicted Risk')
+plt.title(f'Risk Map (Mean Prediction)\n(Color Range: {risk_vmin:.2f} - {risk_vmax:.2f})')
+plt.axis('off')
+plt.show()
+
+# === Step 8: Define continuous reversed colormap for Uncertainty Map ===
+colors = ['#2E0854', '#4B0082', '#800080', '#D8BFD8',
+          '#00008B', '#0000FF', '#ADD8E6', 'lemonchiffon', 'lightyellow']
+
+cmap_uncertainty = LinearSegmentedColormap.from_list('custom_reversed', colors)
+
+
+plt.figure(figsize=(10, 4), facecolor='white')
+im = plt.imshow(masked_uncertainty, cmap=cmap_uncertainty, vmin=uncert_vmin, vmax=uncert_vmax)
+plt.colorbar(im, label='Prediction Uncertainty (Std Dev)')
+plt.title(f'Uncertainty Map (CV Std)\n(Color Range: {uncert_vmin:.2f} - {uncert_vmax:.2f})')
+plt.axis('off')
+plt.show()
